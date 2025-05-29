@@ -1,15 +1,109 @@
+# 在文件顶部添加以下导入语句
 import sys
-import requests
+import os
 import json
+import requests
 from datetime import datetime
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem,
-    QHeaderView, QMessageBox, QTextEdit, QSplitter, QGroupBox, QInputDialog,
+    QHeaderView, QMessageBox, QTextEdit, QSplitter, QGroupBox, 
     QCheckBox, QComboBox, QGridLayout, QScrollArea, QFrame
 )
 from PyQt5.QtCore import Qt, QTimer, QSize
 from PyQt5.QtGui import QFont, QBrush, QColor, QIcon
+
+# 将 BBDownAPIClient 类定义移到模块顶层
+class BBDownAPIClient:
+    def __init__(self, host="localhost", port=58682):
+        self.base_url = f"http://{host}:{port}"
+    
+    def get_tasks(self):
+        try:
+            response = requests.get(f"{self.base_url}/get-tasks/", timeout=5)
+            return response.json() if response.status_code == 200 else None
+        except Exception:
+            return None
+    
+    def get_running_tasks(self):
+        try:
+            response = requests.get(f"{self.base_url}/get-tasks/running", timeout=5)
+            return response.json() if response.status_code == 200 else []
+        except Exception:
+            return []
+    
+    def get_finished_tasks(self):
+        try:
+            response = requests.get(f"{self.base_url}/get-tasks/finished", timeout=5)
+            return response.json() if response.status_code == 200 else []
+        except Exception:
+            return []
+    
+    def get_task(self, aid):
+        try:
+            response = requests.get(f"{self.base_url}/get-tasks/{aid}", timeout=5)
+            return response.json() if response.status_code == 200 else None
+        except Exception:
+            return None
+    
+    def add_task(self, url, options=None):
+        data = {"Url": url}
+        if options:
+            data.update(options)
+        try:
+            response = requests.post(
+                f"{self.base_url}/add-task",
+                json=data,
+                headers={"Content-Type": "application/json"},
+                timeout=10
+            )
+            return response.status_code == 200
+        except Exception:
+            return False
+    
+    def remove_finished_tasks(self):
+        try:
+            response = requests.get(f"{self.base_url}/remove-finished", timeout=5)
+            return response.status_code == 200
+        except Exception:
+            return False
+    
+    def remove_failed_tasks(self):
+        try:
+            response = requests.get(f"{self.base_url}/remove-finished/failed", timeout=5)
+            return response.status_code == 200
+        except Exception:
+            return False
+    
+    def remove_task(self, aid):
+        try:
+            response = requests.get(f"{self.base_url}/remove-finished/{aid}", timeout=5)
+            return response.status_code == 200
+        except Exception:
+            return False
+
+# 确保在 BBDownGUI 类之前定义 OptionsForm
+class OptionsForm(QWidget):
+    # OptionsForm 类的实现保持不变...
+    pass
+
+class BBDownGUI(QMainWindow):
+    # BBDownGUI 类的实现保持不变...
+    pass
+
+if __name__ == "__main__":
+    # 添加显式导入以确保 PyInstaller 包含所有类
+    from bbdown_gui import BBDownAPIClient, OptionsForm, BBDownGUI
+    
+    app = QApplication(sys.argv)
+    
+    # 设置应用样式
+    app.setStyle("Fusion")
+    app.setFont(QFont("Arial", 10))
+    
+    window = BBDownGUI()
+    window.show()
+    sys.exit(app.exec_())
 
 class OptionsForm(QWidget):
     def __init__(self, parent=None):
