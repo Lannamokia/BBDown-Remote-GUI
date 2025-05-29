@@ -1,0 +1,9 @@
+# BBDown GUI 依赖项
+PyQt5==5.15.10
+requests==2.31.0
+pyinstaller==6.4.0
+python-dateutil==2.9.0.post0
+
+# macOS 额外依赖 (用于图标转换)
+pyobjc-core==10.2
+pyobjc-framework-Cocoa==10.2
