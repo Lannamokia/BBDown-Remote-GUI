@@ -1,8 +1,8 @@
-# 在文件顶部添加以下导入语句
 import sys
 import os
 import json
 import requests
+import ctypes
 from datetime import datetime
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
@@ -10,10 +10,17 @@ from PyQt5.QtWidgets import (
     QHeaderView, QMessageBox, QTextEdit, QSplitter, QGroupBox, 
     QCheckBox, QComboBox, QGridLayout, QScrollArea, QFrame
 )
-from PyQt5.QtCore import Qt, QTimer, QSize
-from PyQt5.QtGui import QFont, QBrush, QColor, QIcon
+from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize
+from PyQt5.QtGui import QFont, QBrush, QColor, QIcon, QIntValidator
 
-# 将 BBDownAPIClient 类定义移到模块顶层
+# 优化事件循环设置
+if sys.platform == "win32":
+    # 设置Windows进程优先级为高
+    try:
+        ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), 0x00008000)
+    except:
+        pass
+
 class BBDownAPIClient:
     def __init__(self, host="localhost", port=58682):
         self.base_url = f"http://{host}:{port}"
@@ -22,28 +29,32 @@ class BBDownAPIClient:
         try:
             response = requests.get(f"{self.base_url}/get-tasks/", timeout=5)
             return response.json() if response.status_code == 200 else None
-        except Exception:
+        except Exception as e:
+            print(f"获取任务失败: {str(e)}")
             return None
     
     def get_running_tasks(self):
         try:
             response = requests.get(f"{self.base_url}/get-tasks/running", timeout=5)
             return response.json() if response.status_code == 200 else []
-        except Exception:
+        except Exception as e:
+            print(f"获取运行中任务失败: {str(e)}")
             return []
     
     def get_finished_tasks(self):
         try:
             response = requests.get(f"{self.base_url}/get-tasks/finished", timeout=5)
             return response.json() if response.status_code == 200 else []
-        except Exception:
+        except Exception as e:
+            print(f"获取已完成任务失败: {str(e)}")
             return []
     
     def get_task(self, aid):
         try:
             response = requests.get(f"{self.base_url}/get-tasks/{aid}", timeout=5)
             return response.json() if response.status_code == 200 else None
-        except Exception:
+        except Exception as e:
+            print(f"获取任务详情失败: {str(e)}")
             return None
     
     def add_task(self, url, options=None):
@@ -58,52 +69,70 @@ class BBDownAPIClient:
                 timeout=10
             )
             return response.status_code == 200
-        except Exception:
+        except Exception as e:
+            print(f"添加任务失败: {str(e)}")
             return False
     
     def remove_finished_tasks(self):
         try:
             response = requests.get(f"{self.base_url}/remove-finished", timeout=5)
             return response.status_code == 200
-        except Exception:
+        except Exception as e:
+            print(f"移除已完成任务失败: {str(e)}")
             return False
     
     def remove_failed_tasks(self):
         try:
             response = requests.get(f"{self.base_url}/remove-finished/failed", timeout=5)
             return response.status_code == 200
-        except Exception:
+        except Exception as e:
+            print(f"移除失败任务失败: {str(e)}")
             return False
     
     def remove_task(self, aid):
         try:
             response = requests.get(f"{self.base_url}/remove-finished/{aid}", timeout=5)
             return response.status_code == 200
-        except Exception:
+        except Exception as e:
+            print(f"移除特定任务失败: {str(e)}")
             return False
 
-# 确保在 BBDownGUI 类之前定义 OptionsForm
-class OptionsForm(QWidget):
-    # OptionsForm 类的实现保持不变...
-    pass
-
-class BBDownGUI(QMainWindow):
-    # BBDownGUI 类的实现保持不变...
-    pass
-
-if __name__ == "__main__":
-    # 添加显式导入以确保 PyInstaller 包含所有类
-    from bbdown_gui import BBDownAPIClient, OptionsForm, BBDownGUI
+# 网络请求线程
+class APITaskThread(QThread):
+    finished = pyqtSignal(object)
     
-    app = QApplication(sys.argv)
-    
-    # 设置应用样式
-    app.setStyle("Fusion")
-    app.setFont(QFont("Arial", 10))
-    
-    window = BBDownGUI()
-    window.show()
-    sys.exit(app.exec_())
+    def __init__(self, api_client, task_type, *args, **kwargs):
+        super().__init__()
+        self.api_client = api_client
+        self.task_type = task_type
+        self.args = args
+        self.kwargs = kwargs
+        
+    def run(self):
+        try:
+            if self.task_type == "get_tasks":
+                result = self.api_client.get_tasks()
+            elif self.task_type == "get_running_tasks":
+                result = self.api_client.get_running_tasks()
+            elif self.task_type == "get_finished_tasks":
+                result = self.api_client.get_finished_tasks()
+            elif self.task_type == "get_task":
+                result = self.api_client.get_task(*self.args)
+            elif self.task_type == "add_task":
+                result = self.api_client.add_task(*self.args, **self.kwargs)
+            elif self.task_type == "remove_finished_tasks":
+                result = self.api_client.remove_finished_tasks()
+            elif self.task_type == "remove_failed_tasks":
+                result = self.api_client.remove_failed_tasks()
+            elif self.task_type == "remove_task":
+                result = self.api_client.remove_task(*self.args)
+            else:
+                result = None
+                
+            self.finished.emit(result)
+        except Exception as e:
+            print(f"API线程错误: {str(e)}")
+            self.finished.emit(None)
 
 class OptionsForm(QWidget):
     def __init__(self, parent=None):
@@ -169,7 +198,15 @@ class OptionsForm(QWidget):
         group = QGroupBox(title)
         group.setCheckable(True)
         group.setChecked(False)
-        group.setStyleSheet("QGroupBox::indicator { width: 15px; height: 15px; }")
+        group.setStyleSheet("""
+            QGroupBox::indicator {
+                width: 15px;
+                height: 15px;
+            }
+            QGroupBox {
+                font-weight: bold;
+            }
+        """)
         
         # 设置折叠状态变化时的行为
         group.toggled.connect(lambda checked, w=content_widget: w.setVisible(checked))
@@ -218,6 +255,7 @@ class OptionsForm(QWidget):
         # 延迟
         layout.addWidget(QLabel("分页延迟(ms):"), 6, 0)
         self.delay_input = QLineEdit("0")
+        self.delay_input.setValidator(QIntValidator(0, 10000, self))
         layout.addWidget(self.delay_input, 6, 1, 1, 2)
         
         return widget
@@ -647,12 +685,29 @@ class OptionsForm(QWidget):
 class BBDownGUI(QMainWindow):
     def __init__(self):
         super().__init__()
+        
+        # Windows 特定优化
+        if sys.platform == "win32":
+            # 禁用Windows视觉样式以提升性能
+            try:
+                os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
+                os.environ["QT_SCALE_FACTOR"] = "1"
+            except:
+                pass
+            
+            # 设置Windows兼容模式
+            try:
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("BBDown.GUI")
+            except:
+                pass
+        
+        # 设置窗口标题和尺寸
         self.setWindowTitle("BBDown任务管理器")
         self.setGeometry(100, 100, 1200, 800)
         
         # 设置应用图标
         try:
-            self.setWindowIcon(QIcon("bbdown_icon.png"))
+            self.setWindowIcon(QIcon("bbdown_icon.ico"))
         except:
             pass
         
@@ -663,6 +718,7 @@ class BBDownGUI(QMainWindow):
         self.main_widget = QWidget()
         self.setCentralWidget(self.main_widget)
         self.main_layout = QVBoxLayout(self.main_widget)
+        self.main_layout.setContentsMargins(10, 10, 10, 10)
         
         # 创建顶部连接控制栏
         self.create_connection_controls()
@@ -678,11 +734,12 @@ class BBDownGUI(QMainWindow):
         
         # 设置定时刷新
         self.refresh_timer = QTimer()
-        self.refresh_timer.timeout.connect(self.refresh_tasks)
-        self.refresh_timer.start(5000)  # 每5秒刷新一次
+        self.refresh_timer.timeout.connect(self.start_refresh_tasks)
+        self.refresh_timer.start(10000)  # 每10秒刷新一次
         
         # 初始化数据
-        self.refresh_tasks()
+        self.last_tasks = {"Running": [], "Finished": []}
+        self.start_refresh_tasks()
     
     def create_connection_controls(self):
         connection_group = QGroupBox("连接设置")
@@ -720,8 +777,8 @@ class BBDownGUI(QMainWindow):
             return
         
         self.api_client = BBDownAPIClient(host, port)
-        self.refresh_tasks()
         QMessageBox.information(self, "成功", "连接设置已更新")
+        self.start_refresh_tasks()
     
     def create_dashboard_tab(self):
         dashboard_tab = QWidget()
@@ -730,7 +787,7 @@ class BBDownGUI(QMainWindow):
         # 刷新按钮
         self.refresh_btn = QPushButton("刷新任务")
         self.refresh_btn.setIcon(QIcon.fromTheme("view-refresh"))
-        self.refresh_btn.clicked.connect(self.refresh_tasks)
+        self.refresh_btn.clicked.connect(self.start_refresh_tasks)
         layout.addWidget(self.refresh_btn)
         
         # 分割视图
@@ -820,13 +877,23 @@ class BBDownGUI(QMainWindow):
         
         self.tabs.addTab(manage_tab, "任务管理")
     
-    def refresh_tasks(self):
-        try:
-            # 获取任务数据
-            tasks = self.api_client.get_tasks()
-            if tasks is None:
-                return
-                
+    def start_refresh_tasks(self):
+        """使用线程启动任务刷新"""
+        if hasattr(self, 'refresh_thread') and self.refresh_thread.isRunning():
+            return
+            
+        self.refresh_thread = APITaskThread(self.api_client, "get_tasks")
+        self.refresh_thread.finished.connect(self.handle_refresh_result)
+        self.refresh_thread.start()
+    
+    def handle_refresh_result(self, tasks):
+        """处理刷新结果"""
+        if tasks is None:
+            return
+            
+        # 优化UI更新 - 只在数据变化时更新
+        if tasks != self.last_tasks:
+            self.last_tasks = tasks
             running_tasks = tasks.get("Running", [])
             finished_tasks = tasks.get("Finished", [])
             
@@ -835,13 +902,21 @@ class BBDownGUI(QMainWindow):
             
             # 更新已完成任务表
             self.update_task_table(self.finished_table, finished_tasks, True)
-            
-        except Exception as e:
-            QMessageBox.warning(self, "错误", f"获取任务失败: {str(e)}")
     
     def update_task_table(self, table, tasks, is_finished):
-        table.setRowCount(len(tasks))
+        """优化表格更新性能"""
+        # 避免不必要的UI更新
+        table.setUpdatesEnabled(False)
+        table.blockSignals(True)
         
+        current_row_count = table.rowCount()
+        new_row_count = len(tasks)
+        
+        # 设置行数
+        if new_row_count != current_row_count:
+            table.setRowCount(new_row_count)
+        
+        # 批量更新单元格
         for row, task in enumerate(tasks):
             # 转换时间戳
             create_time = self.format_timestamp(task.get("TaskCreateTime"))
@@ -886,6 +961,11 @@ class BBDownGUI(QMainWindow):
             
             # 将按钮添加到表格
             table.setCellWidget(row, 8, btn)
+        
+        # 启用UI更新
+        table.blockSignals(False)
+        table.setUpdatesEnabled(True)
+        table.viewport().update()  # 强制重绘
     
     def get_progress_color(self, progress):
         """根据进度返回不同的背景颜色"""
@@ -924,33 +1004,46 @@ class BBDownGUI(QMainWindow):
             QMessageBox.warning(self, "输入错误", "URL不能为空")
             return
         
-        try:
-            success = self.api_client.add_task(options["Url"], options)
-            if success:
-                QMessageBox.information(self, "成功", "任务已添加")
-                self.refresh_tasks()
-            else:
-                QMessageBox.warning(self, "错误", "添加任务失败，请检查URL和参数")
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"添加任务时出错: {str(e)}")
+        # 使用线程添加任务
+        self.add_task_thread = APITaskThread(self.api_client, "add_task", options["Url"], options)
+        self.add_task_thread.finished.connect(self.handle_add_task_result)
+        self.add_task_thread.start()
+    
+    def handle_add_task_result(self, success):
+        """处理添加任务结果"""
+        if success:
+            QMessageBox.information(self, "成功", "任务已添加")
+            self.start_refresh_tasks()
+        else:
+            QMessageBox.warning(self, "错误", "添加任务失败，请检查URL和参数")
     
     def remove_all_finished(self):
-        try:
-            success = self.api_client.remove_finished_tasks()
-            if success:
-                QMessageBox.information(self, "成功", "已完成任务已全部移除")
-                self.refresh_tasks()
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"移除任务失败: {str(e)}")
+        # 使用线程移除任务
+        self.remove_thread = APITaskThread(self.api_client, "remove_finished_tasks")
+        self.remove_thread.finished.connect(self.handle_remove_finished)
+        self.remove_thread.start()
+    
+    def handle_remove_finished(self, success):
+        """处理移除完成的任务"""
+        if success:
+            QMessageBox.information(self, "成功", "已完成任务已全部移除")
+            self.start_refresh_tasks()
+        else:
+            QMessageBox.critical(self, "错误", "移除任务失败")
     
     def remove_failed_tasks(self):
-        try:
-            success = self.api_client.remove_failed_tasks()
-            if success:
-                QMessageBox.information(self, "成功", "失败任务已全部移除")
-                self.refresh_tasks()
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"移除任务失败: {str(e)}")
+        # 使用线程移除失败任务
+        self.remove_failed_thread = APITaskThread(self.api_client, "remove_failed_tasks")
+        self.remove_failed_thread.finished.connect(self.handle_remove_failed)
+        self.remove_failed_thread.start()
+    
+    def handle_remove_failed(self, success):
+        """处理移除失败的任务"""
+        if success:
+            QMessageBox.information(self, "成功", "失败任务已全部移除")
+            self.start_refresh_tasks()
+        else:
+            QMessageBox.critical(self, "错误", "移除任务失败")
     
     def remove_task_by_aid(self):
         aid = self.aid_input.text().strip()
@@ -958,63 +1051,103 @@ class BBDownGUI(QMainWindow):
             QMessageBox.warning(self, "输入错误", "AID不能为空")
             return
         
-        try:
-            success = self.api_client.remove_task(aid)
-            if success:
-                QMessageBox.information(self, "成功", f"任务 {aid} 已移除")
-                self.aid_input.clear()
-                self.refresh_tasks()
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"移除任务失败: {str(e)}")
+        # 使用线程移除任务
+        self.remove_task_thread = APITaskThread(self.api_client, "remove_task", aid)
+        self.remove_task_thread.finished.connect(self.handle_remove_task)
+        self.remove_task_thread.start()
+    
+    def handle_remove_task(self, success):
+        """处理移除特定任务"""
+        if success:
+            QMessageBox.information(self, "成功", "任务已移除")
+            self.aid_input.clear()
+            self.start_refresh_tasks()
+        else:
+            QMessageBox.critical(self, "错误", "移除任务失败")
     
     def remove_task(self, aid):
-        try:
-            success = self.api_client.remove_task(aid)
-            if success:
-                QMessageBox.information(self, "成功", f"任务 {aid} 已移除")
-                self.refresh_tasks()
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"移除任务失败: {str(e)}")
+        # 使用线程移除任务
+        self.remove_task_thread = APITaskThread(self.api_client, "remove_task", aid)
+        self.remove_task_thread.finished.connect(lambda success: self.handle_remove_task_by_aid(success, aid))
+        self.remove_task_thread.start()
+    
+    def handle_remove_task_by_aid(self, success, aid):
+        """处理移除特定任务的结果"""
+        if success:
+            QMessageBox.information(self, "成功", f"任务 {aid} 已移除")
+            self.start_refresh_tasks()
+        else:
+            QMessageBox.critical(self, "错误", f"移除任务 {aid} 失败")
     
     def show_task_details(self, aid):
-        try:
-            task = self.api_client.get_task(aid)
-            if not task:
-                QMessageBox.warning(self, "错误", f"找不到任务 {aid}")
-                return
-            
-            # 创建详情对话框
-            detail_dialog = QMessageBox(self)
-            detail_dialog.setWindowTitle(f"任务详情 - {aid}")
-            detail_dialog.setIcon(QMessageBox.Information)
-            
-            # 格式化任务信息
-            details = [
-                f"<b>AID:</b> {task.get('Aid', '')}",
-                f"<b>标题:</b> {task.get('Title', '')}",
-                f"<b>URL:</b> {task.get('Url', '')}",
-                f"<b>创建时间:</b> {self.format_timestamp(task.get('TaskCreateTime'))}",
-                f"<b>完成时间:</b> {self.format_timestamp(task.get('TaskFinishTime'))}",
-                f"<b>进度:</b> {task.get('Progress', 0)*100:.2f}%",
-                f"<b>下载速度:</b> {self.format_bytes(task.get('DownloadSpeed', 0))}/s",
-                f"<b>已下载:</b> {self.format_bytes(task.get('TotalDownloadedBytes', 0))}",
-                f"<b>状态:</b> {'成功' if task.get('IsSuccessful', False) else '失败'}"
-            ]
-            
-            detail_dialog.setText("\n".join(details))
-            detail_dialog.setStandardButtons(QMessageBox.Ok)
-            detail_dialog.exec_()
-            
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"获取任务详情失败: {str(e)}")
+        # 使用线程获取任务详情
+        self.task_detail_thread = APITaskThread(self.api_client, "get_task", aid)
+        self.task_detail_thread.finished.connect(lambda task: self.handle_task_details(task, aid))
+        self.task_detail_thread.start()
+    
+    def handle_task_details(self, task, aid):
+        """显示任务详情"""
+        if not task:
+            QMessageBox.warning(self, "错误", f"找不到任务 {aid}")
+            return
+        
+        # 创建详情对话框
+        detail_dialog = QMessageBox(self)
+        detail_dialog.setWindowTitle(f"任务详情 - {aid}")
+        detail_dialog.setIcon(QMessageBox.Information)
+        
+        # 格式化任务信息
+        details = [
+            f"<b>AID:</b> {task.get('Aid', '')}",
+            f"<b>标题:</b> {task.get('Title', '')}",
+            f"<b>URL:</b> {task.get('Url', '')}",
+            f"<b>创建时间:</b> {self.format_timestamp(task.get('TaskCreateTime'))}",
+            f"<b>完成时间:</b> {self.format_timestamp(task.get('TaskFinishTime'))}",
+            f"<b>进度:</b> {task.get('Progress', 0)*100:.2f}%",
+            f"<b>下载速度:</b> {self.format_bytes(task.get('DownloadSpeed', 0))}/s",
+            f"<b>已下载:</b> {self.format_bytes(task.get('TotalDownloadedBytes', 0))}",
+            f"<b>状态:</b> {'成功' if task.get('IsSuccessful', False) else '失败'}"
+        ]
+        
+        detail_dialog.setText("\n".join(details))
+        detail_dialog.setStandardButtons(QMessageBox.Ok)
+        detail_dialog.exec_()
 
+# 应用启动优化
 if __name__ == "__main__":
+    # Windows特定优化
+    if sys.platform == "win32":
+        # 禁用DPI缩放
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except:
+            pass
+    
+    # 创建应用实例
     app = QApplication(sys.argv)
     
     # 设置应用样式
     app.setStyle("Fusion")
-    app.setFont(QFont("Arial", 10))
     
+    # 优化Windows渲染
+    if sys.platform == "win32":
+        # 使用更轻量的渲染引擎
+        app.setAttribute(Qt.AA_UseSoftwareOpenGL)
+        app.setAttribute(Qt.AA_DisableHighDpiScaling)
+        
+        # 设置字体
+        font = QFont("Segoe UI", 9)
+        app.setFont(font)
+    else:
+        # 其他平台使用默认设置
+        font = QFont("Arial", 10)
+        app.setFont(font)
+    
+    # 创建主窗口
     window = BBDownGUI()
+    
+    # 显示窗口
     window.show()
+    
+    # 启动应用
     sys.exit(app.exec_())
