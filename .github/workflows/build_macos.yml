@@ -25,26 +25,14 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         
-    - name: Prepare icon
-      run: |
-        # 检查并转换图标（使用安全路径）
-        if [ -f "bbdown_icon.png" ]; then
-          # 使用固定输出路径避免临时文件问题
-          sips -s format icns bbdown_icon.png --out ./bbdown_icon.icns
-        else
-          echo "bbdown_icon.png not found, creating placeholder."
-          # 创建空图标文件避免后续失败
-          touch ./bbdown_icon.icns
-        fi
-        
     - name: Build .app bundle
-      run: |
-        # 构建应用程序
+    run: |
+        # 直接使用预先生成的图标
         pyinstaller --windowed --name BBDown_GUI \
-          --icon ./bbdown_icon.icns \
-          --osx-bundle-identifier com.example.bbdown \
-          --add-data "./bbdown_icon.icns:." \
-          bbdown_gui.py
+        --icon ./bbdown_icon.icns \
+        --osx-bundle-identifier com.example.bbdown \
+        --add-data "./bbdown_icon.icns:." \
+        bbdown_gui.py
         
         # 创建应用程序包结构
         mkdir -p "BBDown_GUI.app/Contents/MacOS"
