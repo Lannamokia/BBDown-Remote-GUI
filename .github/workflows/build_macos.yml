@@ -26,13 +26,19 @@ jobs:
         pip install -r requirements.txt
         
     - name: Build .app bundle
-    run: |
-        # 直接使用预先生成的图标
+      run: |
+        # 检查预生成的图标文件是否存在
+        if [ ! -f "bbdown_icon.icns" ]; then
+          echo "预生成的图标文件 bbdown_icon.icns 不存在"
+          exit 1
+        fi
+        
+        # 构建应用程序
         pyinstaller --windowed --name BBDown_GUI \
-        --icon ./bbdown_icon.icns \
-        --osx-bundle-identifier com.example.bbdown \
-        --add-data "./bbdown_icon.icns:." \
-        bbdown_gui.py
+          --icon bbdown_icon.icns \
+          --osx-bundle-identifier com.example.bbdown \
+          --add-data "bbdown_icon.icns:." \
+          bbdown_gui.py
         
         # 创建应用程序包结构
         mkdir -p "BBDown_GUI.app/Contents/MacOS"
@@ -65,12 +71,16 @@ jobs:
             <true/>
             <key>LSMinimumSystemVersion</key>
             <string>10.15</string>
+            <key>NSPrincipalClass</key>
+            <string>NSApplication</string>
+            <key>NSAppleScriptEnabled</key>
+            <false/>
         </dict>
         </plist>
         EOL
         
         # 复制图标到资源目录
-        cp ./bbdown_icon.icns "BBDown_GUI.app/Contents/Resources/"
+        cp bbdown_icon.icns "BBDown_GUI.app/Contents/Resources/"
         
         # 创建可执行文件包装器
         cat > "BBDown_GUI.app/Contents/MacOS/BBDown_GUI" <<EOL
@@ -80,6 +90,13 @@ jobs:
         EOL
         
         chmod +x "BBDown_GUI.app/Contents/MacOS/BBDown_GUI"
+        
+        # 添加应用程序元数据
+        touch "BBDown_GUI.app/Contents/PkgInfo"
+        echo "APPL????" > "BBDown_GUI.app/Contents/PkgInfo"
+        
+        # 设置文件属性
+        xattr -cr "BBDown_GUI.app"
         
         # 压缩应用程序（使用ditto保持元数据）
         ditto -c -k --keepParent BBDown_GUI.app BBDown_GUI_Mac.zip
