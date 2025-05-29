@@ -1,0 +1,103 @@
+name: Build macOS Application
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyqt5 requests pyinstaller
+        
+    - name: Build .app bundle
+      run: |
+        # 创建图标文件（如果不存在）
+        if [ ! -f "bbdown_icon.icns" ]; then
+          if [ -f "bbdown_icon.png" ]; then
+            sips -s format icns bbdown_icon.png --out bbdown_icon.icns
+          else
+            echo "Using default icon"
+            touch bbdown_icon.icns
+          fi
+        fi
+        
+        # 构建应用程序
+        pyinstaller --windowed --name BBDown_GUI \
+          --icon bbdown_icon.icns \
+          --osx-bundle-identifier com.example.bbdown \
+          --add-data "bbdown_icon.icns:." \
+          bbdown_gui.py
+        
+        # 创建应用程序包
+        mkdir -p "BBDown_GUI.app/Contents/MacOS"
+        mkdir -p "BBDown_GUI.app/Contents/Resources"
+        
+        # 复制可执行文件
+        cp dist/BBDown_GUI/BBDown_GUI "BBDown_GUI.app/Contents/MacOS/"
+        
+        # 创建 Info.plist
+        cat > "BBDown_GUI.app/Contents/Info.plist" <<EOL
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>CFBundleExecutable</key>
+            <string>BBDown_GUI</string>
+            <key>CFBundleIconFile</key>
+            <string>bbdown_icon.icns</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.example.bbdown</string>
+            <key>CFBundleName</key>
+            <string>BBDown GUI</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleVersion</key>
+            <string>1.0.0</string>
+            <key>CFBundleShortVersionString</key>
+            <string>1.0</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+            <key>LSMinimumSystemVersion</key>
+            <string>10.15</string>
+        </dict>
+        </plist>
+        EOL
+        
+        # 复制图标
+        cp bbdown_icon.icns "BBDown_GUI.app/Contents/Resources/"
+        
+        # 创建可执行文件包装器
+        cat > "BBDown_GUI.app/Contents/MacOS/BBDown_GUI" <<EOL
+        #!/bin/bash
+        SCRIPT_DIR=\$(cd "\$(dirname "\$0")"; pwd)
+        exec "\$SCRIPT_DIR/BBDown_GUI" "\$@"
+        EOL
+        
+        chmod +x "BBDown_GUI.app/Contents/MacOS/BBDown_GUI"
+        
+        # 压缩应用程序
+        zip -r BBDown_GUI_Mac.zip BBDown_GUI.app
+        mkdir artifact
+        mv BBDown_GUI_Mac.zip artifact/
+        
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: BBDown_GUI_Mac
+        path: artifact/BBDown_GUI_Mac.zip
