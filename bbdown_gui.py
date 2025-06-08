@@ -956,8 +956,20 @@ class BBDownGUI(QMainWindow):
         self.start_bbdown_btn.clicked.connect(self.start_bbdown_server)
         self.start_bbdown_btn.setEnabled(False)  # 初始禁用
         
+        self.stop_bbdown_btn = QPushButton("停止BBDown服务")
+        self.stop_bbdown_btn.setIcon(QIcon.fromTheme("media-playback-stop"))
+        self.stop_bbdown_btn.clicked.connect(self.stop_bbdown_server)
+        self.stop_bbdown_btn.setEnabled(False)  # 初始禁用
+        
+        self.delete_bbdown_btn = QPushButton("删除BBDown文件")
+        self.delete_bbdown_btn.setIcon(QIcon.fromTheme("edit-delete"))
+        self.delete_bbdown_btn.clicked.connect(self.delete_bbdown_files)
+        self.delete_bbdown_btn.setEnabled(False)  # 初始禁用
+        
         layout.addWidget(self.download_bbdown_btn)
         layout.addWidget(self.start_bbdown_btn)
+        layout.addWidget(self.stop_bbdown_btn)
+        layout.addWidget(self.delete_bbdown_btn)
         layout.addStretch()
         
         self.main_layout.addWidget(connection_group)
@@ -1327,11 +1339,14 @@ class BBDownGUI(QMainWindow):
                     if file.lower().startswith('bbdown') and (file.endswith('.exe') or '.' not in file):
                         self.bbdown_path = os.path.join(root, file)
                         self.start_bbdown_btn.setEnabled(True)
+                        self.delete_bbdown_btn.setEnabled(True)
                         self.download_bbdown_btn.setText("重新下载BBDown")
                         return
         
         self.bbdown_path = None
         self.start_bbdown_btn.setEnabled(False)
+        self.stop_bbdown_btn.setEnabled(False)
+        self.delete_bbdown_btn.setEnabled(False)
         self.download_bbdown_btn.setText("下载BBDown")
     
     def download_bbdown(self):
@@ -1424,10 +1439,116 @@ class BBDownGUI(QMainWindow):
         
         if success:
             QMessageBox.information(self, "成功", message)
+            # 启动成功后启用停止按钮
+            self.stop_bbdown_btn.setEnabled(True)
             # 自动刷新任务列表
             self.start_refresh_tasks()
         else:
             QMessageBox.critical(self, "错误", message)
+    
+    def stop_bbdown_server(self):
+        """停止BBDown服务器"""
+        reply = QMessageBox.question(
+            self, "确认停止", 
+            "确定要停止BBDown服务器吗？这将中断所有正在进行的下载任务。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+        
+        try:
+            # 尝试通过API优雅关闭
+            try:
+                response = requests.post(f"{self.api_client.base_url}/shutdown", timeout=5)
+                if response.status_code == 200:
+                    QMessageBox.information(self, "成功", "BBDown服务器已停止")
+                    self.stop_bbdown_btn.setEnabled(False)
+                    return
+            except:
+                pass
+            
+            # 如果API关闭失败，尝试通过进程管理停止
+            system = platform.system().lower()
+            if system == "windows":
+                # Windows系统使用taskkill
+                subprocess.run(["taskkill", "/f", "/im", "BBDown.exe"], 
+                             capture_output=True, text=True)
+            else:
+                # Unix系统使用pkill
+                subprocess.run(["pkill", "-f", "BBDown"], 
+                             capture_output=True, text=True)
+            
+            # 等待一下确保进程已停止
+            import time
+            time.sleep(2)
+            
+            # 检查服务器是否已停止
+            try:
+                response = requests.get(f"{self.api_client.base_url}/get-tasks/", timeout=2)
+                if response.status_code == 200:
+                    QMessageBox.warning(self, "警告", "服务器可能仍在运行，请手动检查")
+                else:
+                    QMessageBox.information(self, "成功", "BBDown服务器已停止")
+                    self.stop_bbdown_btn.setEnabled(False)
+            except:
+                QMessageBox.information(self, "成功", "BBDown服务器已停止")
+                self.stop_bbdown_btn.setEnabled(False)
+                
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"停止服务器失败: {str(e)}")
+    
+    def delete_bbdown_files(self):
+        """删除BBDown服务端文件"""
+        reply = QMessageBox.question(
+            self, "确认删除", 
+            "确定要删除BBDown服务端文件吗？这将删除所有已下载的BBDown文件，操作不可撤销。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+        
+        try:
+            # 首先尝试停止服务器
+            try:
+                requests.post(f"{self.api_client.base_url}/shutdown", timeout=2)
+            except:
+                pass
+            
+            # 强制停止进程
+            system = platform.system().lower()
+            if system == "windows":
+                subprocess.run(["taskkill", "/f", "/im", "BBDown.exe"], 
+                             capture_output=True, text=True)
+            else:
+                subprocess.run(["pkill", "-f", "BBDown"], 
+                             capture_output=True, text=True)
+            
+            # 等待进程完全停止
+            import time
+            time.sleep(2)
+            
+            # 删除BBDown目录
+            bbdown_dir = os.path.join(os.path.expanduser("~"), ".bbdown")
+            if os.path.exists(bbdown_dir):
+                import shutil
+                shutil.rmtree(bbdown_dir)
+                QMessageBox.information(self, "成功", "BBDown文件已删除")
+                
+                # 重置按钮状态
+                self.bbdown_path = None
+                self.start_bbdown_btn.setEnabled(False)
+                self.stop_bbdown_btn.setEnabled(False)
+                self.delete_bbdown_btn.setEnabled(False)
+                self.download_bbdown_btn.setText("下载BBDown")
+            else:
+                QMessageBox.information(self, "提示", "BBDown文件目录不存在")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"删除文件失败: {str(e)}")
 
 # 应用启动优化
 if __name__ == "__main__":
