@@ -267,13 +267,9 @@ class BBDownManagerThread(QThread):
                     # 尝试直接设置权限
                     os.chmod(bbdown_exe, 0o755)
                 except PermissionError:
-                    # 如果权限不足，使用sudo
-                    try:
-                        subprocess.run(['sudo', 'chmod', '+x', bbdown_exe], check=True)
-                    except subprocess.CalledProcessError:
-                        # 如果sudo失败，尝试使用osascript请求管理员权限
-                        script = f'do shell script "chmod +x {bbdown_exe}" with administrator privileges'
-                        subprocess.run(['osascript', '-e', script], check=True)
+                    # 如果权限不足，直接使用osascript请求管理员权限
+                    script = f'do shell script "chmod +x {bbdown_exe}" with administrator privileges'
+                    subprocess.run(['osascript', '-e', script], check=True)
             
             # 清理下载的压缩包
             os.remove(download_path)
