@@ -81,13 +81,24 @@ jobs:
         cp bbdown_icon.icns "$DIST_APP/Contents/Resources/"
         
         # 设置正确的权限
-        chmod -R 755 "$DIST_APP"
-        chmod +x "$DIST_APP/Contents/MacOS/BBDown GUI"
-        
-        # 清理扩展属性
-        xattr -cr "$DIST_APP"
-        
-        echo "✅ 应用程序包自定义完成"
+         chmod -R 755 "$DIST_APP"
+         chmod +x "$DIST_APP/Contents/MacOS/BBDown GUI"
+         
+         # 清理扩展属性
+         xattr -cr "$DIST_APP"
+         
+         # 代码签名（使用临时签名）
+         echo "🔐 开始代码签名..."
+         codesign --force --deep --sign - "$DIST_APP"
+         
+         # 验证签名
+         if codesign --verify --verbose "$DIST_APP"; then
+           echo "✅ 代码签名验证成功"
+         else
+           echo "⚠️ 代码签名验证失败，但继续构建"
+         fi
+         
+         echo "✅ 应用程序包自定义完成"
         
     - name: Create distribution package
       run: |
