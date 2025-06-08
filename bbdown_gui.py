@@ -7,6 +7,7 @@ import subprocess
 import platform
 import zipfile
 import tarfile
+import time
 from datetime import datetime
 from urllib.parse import urlparse
 from PyQt5.QtWidgets import (
@@ -262,19 +263,48 @@ class BBDownManagerThread(QThread):
             
             # 在macOS上设置可执行权限
             if system == "darwin":
-                self.progress.emit("正在设置可执行权限...")
+                self.progress.emit("开始设置macOS可执行权限...")
+                print(f"[DEBUG] 准备为文件设置可执行权限: {bbdown_exe}")
+                
+                # 直接使用osascript请求管理员权限进行赋权
+                script = f'do shell script "chmod +x {bbdown_exe}" with administrator privileges'
+                print(f"[DEBUG] 构建的osascript命令: {script}")
+                
+                self.progress.emit("正在请求管理员权限...")
+                print("[DEBUG] 开始执行osascript命令，等待用户授权...")
+                
                 try:
-                    # 尝试直接设置权限
-                    os.chmod(bbdown_exe, 0o755)
-                except PermissionError:
-                    # 如果权限不足，直接使用osascript请求管理员权限
-                    script = f'do shell script "chmod +x {bbdown_exe}" with administrator privileges'
-                    subprocess.run(['osascript', '-e', script], check=True)
+                    print("[DEBUG] 调用subprocess.run执行osascript...")
+                    result = subprocess.run(['osascript', '-e', script], 
+                                           check=True, timeout=60, 
+                                           capture_output=True, text=True)
+                    print(f"[DEBUG] osascript执行成功，返回码: {result.returncode}")
+                    print(f"[DEBUG] stdout: {result.stdout}")
+                    print(f"[DEBUG] stderr: {result.stderr}")
+                    self.progress.emit("可执行权限设置成功")
+                    print("[DEBUG] 权限设置完成，继续后续流程...")
+                    
+                except subprocess.TimeoutExpired:
+                    print("[ERROR] osascript执行超时")
+                    raise Exception("设置可执行权限超时，请重试")
+                except subprocess.CalledProcessError as e:
+                    print(f"[ERROR] osascript执行失败，返回码: {e.returncode}")
+                    print(f"[ERROR] stdout: {e.stdout}")
+                    print(f"[ERROR] stderr: {e.stderr}")
+                    raise Exception(f"设置可执行权限失败: {e.stderr if e.stderr else '用户取消或权限不足'}")
+                except Exception as e:
+                    print(f"[ERROR] 设置权限时发生未知错误: {str(e)}")
+                    print(f"[ERROR] 错误类型: {type(e).__name__}")
+                    raise Exception(f"设置可执行权限时发生错误: {str(e)}")
             
+            print(f"[DEBUG] 开始清理下载的压缩包: {download_path}")
             # 清理下载的压缩包
             os.remove(download_path)
+            print("[DEBUG] 压缩包清理完成")
             
+            print(f"[DEBUG] 准备发送完成信号: BBDown {tag_name} 下载完成")
             self.finished.emit(True, f"BBDown {tag_name} 下载完成: {bbdown_exe}")
+            print("[DEBUG] 完成信号已发送")
             
         except Exception as e:
             self.finished.emit(False, f"下载失败: {str(e)}")
@@ -335,6 +365,8 @@ class OptionsForm(QWidget):
         
         # 基本选项组
         basic_group = self.create_collapsible_group("基本选项", self.create_basic_options())
+        # 为基本选项组添加特殊的勾选事件处理
+        basic_group.toggled.connect(self.on_basic_options_toggled)
         content_layout.addWidget(basic_group)
         
         # API选项组
@@ -407,35 +439,43 @@ class OptionsForm(QWidget):
         layout.addWidget(QLabel("视频URL:"), 0, 0)
         layout.addWidget(self.url_input, 0, 1, 1, 2)
         
+        # 工作目录（必填项，顶置）
+        layout.addWidget(QLabel("工作目录*:"), 1, 0)
+        self.work_dir = QLineEdit()
+        self.work_dir.setPlaceholderText("下载文件保存路径（必填）")
+        # 设置工作目录的默认值
+        self.set_default_work_dir()
+        layout.addWidget(self.work_dir, 1, 1, 1, 2)
+        
         # 仅显示信息
         self.only_show_info = QCheckBox("仅显示信息（不下载）")
-        layout.addWidget(self.only_show_info, 1, 0, 1, 3)
+        layout.addWidget(self.only_show_info, 2, 0, 1, 3)
         
         # 显示所有信息
         self.show_all = QCheckBox("显示所有信息（包括隐藏流）")
-        layout.addWidget(self.show_all, 2, 0, 1, 3)
+        layout.addWidget(self.show_all, 3, 0, 1, 3)
         
         # 交互模式
         self.interactive = QCheckBox("交互模式（手动选择）")
-        layout.addWidget(self.interactive, 3, 0, 1, 3)
+        layout.addWidget(self.interactive, 4, 0, 1, 3)
         
         # 区域设置
-        layout.addWidget(QLabel("区域设置:"), 4, 0)
+        layout.addWidget(QLabel("区域设置:"), 5, 0)
         self.area_combo = QComboBox()
         self.area_combo.addItems(["", "大陆", "港澳台", "泰国", "其他"])
-        layout.addWidget(self.area_combo, 4, 1, 1, 2)
+        layout.addWidget(self.area_combo, 5, 1, 1, 2)
         
         # 语言设置
-        layout.addWidget(QLabel("语言:"), 5, 0)
+        layout.addWidget(QLabel("语言:"), 6, 0)
         self.language_input = QLineEdit()
         self.language_input.setPlaceholderText("如: zh-Hans")
-        layout.addWidget(self.language_input, 5, 1, 1, 2)
+        layout.addWidget(self.language_input, 6, 1, 1, 2)
         
         # 延迟
-        layout.addWidget(QLabel("分页延迟(ms):"), 6, 0)
+        layout.addWidget(QLabel("分页延迟(ms):"), 7, 0)
         self.delay_input = QLineEdit("0")
         self.delay_input.setValidator(QIntValidator(0, 10000, self))
-        layout.addWidget(self.delay_input, 6, 1, 1, 2)
+        layout.addWidget(self.delay_input, 7, 1, 1, 2)
         
         return widget
     
@@ -611,29 +651,23 @@ class OptionsForm(QWidget):
         layout = QGridLayout(widget)
         layout.setColumnStretch(1, 1)
         
-        # 工作目录
-        layout.addWidget(QLabel("工作目录:"), 0, 0)
-        self.work_dir = QLineEdit()
-        self.work_dir.setPlaceholderText("下载文件保存路径")
-        layout.addWidget(self.work_dir, 0, 1)
-        
         # FFmpeg路径
-        layout.addWidget(QLabel("FFmpeg路径:"), 1, 0)
+        layout.addWidget(QLabel("FFmpeg路径:"), 0, 0)
         self.ffmpeg_path = QLineEdit()
         self.ffmpeg_path.setPlaceholderText("自定义FFmpeg路径")
-        layout.addWidget(self.ffmpeg_path, 1, 1)
+        layout.addWidget(self.ffmpeg_path, 0, 1)
         
         # MP4box路径
-        layout.addWidget(QLabel("MP4box路径:"), 2, 0)
+        layout.addWidget(QLabel("MP4box路径:"), 1, 0)
         self.mp4box_path = QLineEdit()
         self.mp4box_path.setPlaceholderText("自定义MP4box路径")
-        layout.addWidget(self.mp4box_path, 2, 1)
+        layout.addWidget(self.mp4box_path, 1, 1)
         
         # aria2c路径
-        layout.addWidget(QLabel("aria2c路径:"), 3, 0)
+        layout.addWidget(QLabel("aria2c路径:"), 2, 0)
         self.aria2c_path = QLineEdit()
         self.aria2c_path.setPlaceholderText("自定义aria2c路径")
-        layout.addWidget(self.aria2c_path, 3, 1)
+        layout.addWidget(self.aria2c_path, 2, 1)
         
         return widget
     
@@ -755,6 +789,58 @@ class OptionsForm(QWidget):
         
         return widget
     
+    def on_basic_options_toggled(self, checked):
+        """当基本选项组被勾选时的处理"""
+        if checked:
+            print("[DEBUG] 基本选项组被勾选，设置默认工作目录")
+            self.set_default_work_dir()
+    
+    def set_default_work_dir(self):
+        """设置默认工作目录"""
+        # 获取父级GUI对象来检查主机设置
+        parent_gui = self.parent()
+        while parent_gui and not hasattr(parent_gui, 'host_input'):
+            parent_gui = parent_gui.parent()
+        
+        is_localhost = False
+        if parent_gui and hasattr(parent_gui, 'host_input'):
+            current_host = parent_gui.host_input.text().strip().lower()
+            is_localhost = current_host in ['localhost', '127.0.0.1', '::1']
+        
+        if is_localhost:
+            # 根据操作系统设置默认下载目录
+            import os
+            import sys
+            
+            if sys.platform == "win32":
+                # Windows系统
+                import winreg
+                try:
+                    # 尝试从注册表获取下载文件夹路径
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, 
+                                      r"Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders") as key:
+                        downloads_path = winreg.QueryValueEx(key, "{374DE290-123F-4565-9164-39C4925E467B}")[0]
+                except:
+                    # 如果失败，使用默认路径
+                    downloads_path = os.path.join(os.path.expanduser("~"), "Downloads")
+            elif sys.platform == "darwin":
+                # macOS系统
+                downloads_path = os.path.join(os.path.expanduser("~"), "Downloads")
+            else:
+                # Linux或其他系统
+                downloads_path = os.path.join(os.path.expanduser("~"), "Downloads")
+            
+            # 检查目录是否存在
+            if os.path.exists(downloads_path):
+                self.work_dir.setText(downloads_path)
+                print(f"[DEBUG] 设置默认工作目录为: {downloads_path}")
+            else:
+                print(f"[DEBUG] 默认下载目录不存在: {downloads_path}")
+        else:
+            # 非localhost连接，保持为空
+            self.work_dir.clear()
+            print("[DEBUG] 非localhost连接，工作目录保持为空")
+    
     def get_options(self):
         """收集所有选项并返回字典"""
         options = {}
@@ -826,10 +912,28 @@ class OptionsForm(QWidget):
         # 网络设置
         if self.user_agent.text().strip():
             options["UserAgent"] = self.user_agent.text().strip()
-        if self.cookie.text().strip():
-            options["Cookie"] = self.cookie.text().strip()
-        if self.access_token.text().strip():
-            options["AccessToken"] = self.access_token.text().strip()
+        
+        # 检查是否连接到localhost，如果是则不附加认证信息
+        parent_gui = self.parent()
+        while parent_gui and not hasattr(parent_gui, 'host_input'):
+            parent_gui = parent_gui.parent()
+        
+        is_localhost = False
+        if parent_gui and hasattr(parent_gui, 'host_input'):
+            current_host = parent_gui.host_input.text().strip().lower()
+            is_localhost = current_host in ['localhost', '127.0.0.1', '::1']
+            print(f"[DEBUG] 当前连接主机: {current_host}, 是否为localhost: {is_localhost}")
+        
+        # 只有在非localhost连接时才附加认证信息
+        if not is_localhost:
+            if self.cookie.text().strip():
+                options["Cookie"] = self.cookie.text().strip()
+                print("[DEBUG] 已添加Cookie参数")
+            if self.access_token.text().strip():
+                options["AccessToken"] = self.access_token.text().strip()
+                print("[DEBUG] 已添加AccessToken参数")
+        else:
+            print("[DEBUG] 检测到localhost连接，跳过认证信息附加")
         if self.host_input.text().strip():
             options["Host"] = self.host_input.text().strip()
         if self.ep_host_input.text().strip():
@@ -910,6 +1014,7 @@ class BBDownGUI(QMainWindow):
         self.create_dashboard_tab()
         self.create_add_task_tab()
         self.create_manage_tab()
+        self.create_auth_tab()
         
         # 设置定时刷新
         self.refresh_timer = QTimer()
@@ -918,6 +1023,7 @@ class BBDownGUI(QMainWindow):
         
         # 初始化数据
         self.last_tasks = {"Running": [], "Finished": []}
+        
         self.start_refresh_tasks()
     
     def create_connection_controls(self):
@@ -1090,6 +1196,77 @@ class BBDownGUI(QMainWindow):
         
         self.tabs.addTab(manage_tab, "任务管理")
     
+    def create_auth_tab(self):
+        auth_tab = QWidget()
+        layout = QVBoxLayout(auth_tab)
+        
+        # Web接口鉴权组
+        web_auth_group = QGroupBox("Web接口鉴权")
+        web_layout = QVBoxLayout(web_auth_group)
+        
+        # Web鉴权说明
+        web_info = QLabel("点击下方按钮将打开终端运行BBDown login命令进行Web接口登录")
+        web_info.setWordWrap(True)
+        web_layout.addWidget(web_info)
+        
+        # Web登录按钮
+        self.web_login_btn = QPushButton("Web接口登录")
+        self.web_login_btn.setIcon(QIcon.fromTheme("network-connect"))
+        self.web_login_btn.clicked.connect(self.web_login)
+        web_layout.addWidget(self.web_login_btn)
+        
+        # Cookie显示区域
+        cookie_label = QLabel("当前Cookie:")
+        web_layout.addWidget(cookie_label)
+        self.cookie_display = QTextEdit()
+        self.cookie_display.setMaximumHeight(100)
+        self.cookie_display.setReadOnly(True)
+        web_layout.addWidget(self.cookie_display)
+        
+        layout.addWidget(web_auth_group)
+        
+        # App与TV接口鉴权组
+        tv_auth_group = QGroupBox("App与TV接口鉴权")
+        tv_layout = QVBoxLayout(tv_auth_group)
+        
+        # TV鉴权说明
+        tv_info = QLabel("点击下方按钮将打开终端运行BBDown logintv命令进行App/TV接口登录")
+        tv_info.setWordWrap(True)
+        tv_layout.addWidget(tv_info)
+        
+        # TV登录按钮
+        self.tv_login_btn = QPushButton("App/TV接口登录")
+        self.tv_login_btn.setIcon(QIcon.fromTheme("network-connect"))
+        self.tv_login_btn.clicked.connect(self.tv_login)
+        tv_layout.addWidget(self.tv_login_btn)
+        
+        # Access Token显示区域
+        token_label = QLabel("当前Access Token:")
+        tv_layout.addWidget(token_label)
+        self.token_display = QTextEdit()
+        self.token_display.setMaximumHeight(100)
+        self.token_display.setReadOnly(True)
+        tv_layout.addWidget(self.token_display)
+        
+        layout.addWidget(tv_auth_group)
+        
+        # 使用说明
+        usage_group = QGroupBox("使用说明")
+        usage_layout = QVBoxLayout(usage_group)
+        usage_text = QLabel(
+            "• Cookie用于Web API（默认API类型）\n"
+            "• Access Token用于App/TV API\n"
+            "• Cookie与Access Token互斥，一个请求只能携带其中一种\n"
+            "• 登录成功后，凭据会自动填入添加任务选项卡的网络设置中"
+        )
+        usage_text.setWordWrap(True)
+        usage_layout.addWidget(usage_text)
+        layout.addWidget(usage_group)
+        
+        layout.addStretch()
+        
+        self.tabs.addTab(auth_tab, "账号凭据管理")
+    
     def start_refresh_tasks(self):
         """使用线程启动任务刷新"""
         if hasattr(self, 'refresh_thread') and self.refresh_thread.isRunning():
@@ -1210,12 +1387,27 @@ class BBDownGUI(QMainWindow):
             return f"{size/(1024**3):.2f} GB"
     
     def add_new_task(self):
+        """添加新任务"""
         # 从表单获取选项
         options = self.options_form.get_options()
         
         if "Url" not in options or not options["Url"]:
             QMessageBox.warning(self, "输入错误", "URL不能为空")
             return
+        
+        # 检查工作目录是否为空（必填项）
+        work_dir = self.options_form.work_dir.text().strip()
+        if not work_dir:
+            # 检查是否为非localhost连接
+            current_host = self.host_input.text().strip().lower()
+            is_localhost = current_host in ['localhost', '127.0.0.1', '::1']
+            
+            if not is_localhost:
+                QMessageBox.warning(self, "输入错误", "工作目录不能为空，请设置下载文件保存路径")
+                return
+            else:
+                QMessageBox.warning(self, "输入错误", "工作目录不能为空")
+                return
         
         # 使用线程添加任务
         self.add_task_thread = APITaskThread(self.api_client, "add_task", options["Url"], options)
@@ -1328,22 +1520,34 @@ class BBDownGUI(QMainWindow):
     
     def check_existing_bbdown(self):
         """检查是否已存在BBDown可执行文件"""
+        print("[DEBUG] 开始检查现有BBDown文件")
+        from PyQt5.QtWidgets import QApplication
+        
         bbdown_dir = os.path.join(os.path.expanduser("~"), ".bbdown", "current")
         if os.path.exists(bbdown_dir):
+            print(f"[DEBUG] BBDown目录存在: {bbdown_dir}")
             for root, dirs, files in os.walk(bbdown_dir):
+                # 处理事件循环，避免界面冻结
+                QApplication.processEvents()
                 for file in files:
                     if file.lower().startswith('bbdown') and (file.endswith('.exe') or '.' not in file):
+                        print(f"[DEBUG] 找到BBDown可执行文件: {file}")
                         self.bbdown_path = os.path.join(root, file)
                         self.start_bbdown_btn.setEnabled(True)
                         self.delete_bbdown_btn.setEnabled(True)
                         self.download_bbdown_btn.setText("重新下载BBDown")
+                        print("[DEBUG] BBDown状态更新完成 - 已存在")
+                        # 找到BBDown后加载认证数据
+                        self.load_existing_auth_data()
                         return
         
+        print("[DEBUG] 未找到BBDown可执行文件")
         self.bbdown_path = None
         self.start_bbdown_btn.setEnabled(False)
         self.stop_bbdown_btn.setEnabled(False)
         self.delete_bbdown_btn.setEnabled(False)
         self.download_bbdown_btn.setText("下载BBDown")
+        print("[DEBUG] BBDown状态更新完成 - 不存在")
     
     def download_bbdown(self):
         """下载BBDown"""
@@ -1373,20 +1577,76 @@ class BBDownGUI(QMainWindow):
     
     def handle_download_finished(self, success, message):
         """处理下载完成"""
+        print(f"[DEBUG] 进入handle_download_finished，success={success}, message={message}")
+        
         # 关闭进度对话框
         if hasattr(self, 'progress_dialog'):
-            self.progress_dialog.close()
-            delattr(self, 'progress_dialog')
+            print("[DEBUG] 检测到进度对话框存在，准备关闭")
+            try:
+                print("[DEBUG] 断开进度对话框的信号连接")
+                # 先断开所有信号连接，防止关闭时触发其他事件
+                try:
+                    self.progress_dialog.canceled.disconnect()
+                except:
+                    pass
+                
+                print("[DEBUG] 设置进度对话框为非模态")
+                self.progress_dialog.setModal(False)
+                
+                print("[DEBUG] 隐藏进度对话框")
+                self.progress_dialog.hide()
+                
+                print("[DEBUG] 调用progress_dialog.close()")
+                self.progress_dialog.close()
+                print("[DEBUG] progress_dialog.close()执行完成")
+                
+                print("[DEBUG] 使用deleteLater()安全删除对话框")
+                self.progress_dialog.deleteLater()
+                
+                print("[DEBUG] 清空progress_dialog引用")
+                self.progress_dialog = None
+                print("[DEBUG] progress_dialog处理完成")
+            except Exception as e:
+                print(f"[ERROR] 关闭进度对话框时发生错误: {str(e)}")
+                print(f"[ERROR] 错误类型: {type(e).__name__}")
+                # 即使出错也要清空引用
+                self.progress_dialog = None
+        else:
+            print("[DEBUG] 没有检测到progress_dialog属性")
         
         # 重新启用按钮
+        print("[DEBUG] 重新启用下载按钮")
         self.download_bbdown_btn.setEnabled(True)
         
         if success:
-            QMessageBox.information(self, "成功", message)
-            # 重新检查BBDown状态
-            self.check_existing_bbdown()
+            print("[DEBUG] 下载成功，准备异步显示成功消息框")
+            # 使用QTimer异步显示消息框和检查状态，避免阻塞主线程
+            from PyQt5.QtCore import QTimer
+            QTimer.singleShot(50, lambda: self.show_success_message_and_check(message))
+            print("[DEBUG] 成功处理已安排异步执行")
         else:
-            QMessageBox.critical(self, "错误", message)
+            print("[DEBUG] 下载失败，准备异步显示错误消息框")
+            from PyQt5.QtCore import QTimer
+            QTimer.singleShot(50, lambda: self.show_error_message(message))
+            print("[DEBUG] 错误处理已安排异步执行")
+        
+        print("[DEBUG] handle_download_finished方法执行完成")
+    
+    def show_success_message_and_check(self, message):
+        """异步显示成功消息并检查BBDown状态"""
+        print("[DEBUG] 显示成功消息框")
+        QMessageBox.information(self, "成功", message)
+        print("[DEBUG] 成功消息框已关闭，准备检查BBDown状态")
+        # 再次异步执行状态检查
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(100, self.check_existing_bbdown)
+        print("[DEBUG] BBDown状态检查已安排执行")
+    
+    def show_error_message(self, message):
+        """异步显示错误消息"""
+        print("[DEBUG] 显示错误消息框")
+        QMessageBox.critical(self, "错误", message)
+        print("[DEBUG] 错误消息框已关闭")
     
     def cancel_download(self):
         """取消下载"""
@@ -1545,6 +1805,379 @@ class BBDownGUI(QMainWindow):
                 
         except Exception as e:
             QMessageBox.critical(self, "错误", f"删除文件失败: {str(e)}")
+    
+    def web_login(self):
+        """Web接口登录"""
+        if not self.bbdown_path or not os.path.exists(self.bbdown_path):
+            reply = QMessageBox.question(
+                self, 
+                "BBDown未下载", 
+                "BBDown可执行文件不存在，需要先下载BBDown才能进行登录。\n\n是否现在下载BBDown？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes
+            )
+            
+            if reply == QMessageBox.Yes:
+                self.download_bbdown()
+            return
+        
+        # 显示登录提示
+        reply = QMessageBox.question(
+            self, 
+            "登录提示", 
+            "即将打开终端进行B站登录。\n\n请注意：\n• 登录过程中需要扫描二维码\n• 请将终端窗口最大化以便清楚看到二维码\n• 使用B站手机APP扫描二维码完成登录\n\n确认开始登录吗？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+        
+        # 禁用按钮防止重复点击
+        self.web_login_btn.setEnabled(False)
+        self.web_login_btn.setText("等待登录完成...")
+        
+        # 记录登录开始时间和数据文件路径
+        bbdown_dir = os.path.dirname(self.bbdown_path)
+        self.web_data_file = os.path.join(bbdown_dir, "BBDown.data")
+        self.web_login_start_time = time.time()
+        
+        # 创建登录线程
+        self.web_login_thread = LoginThread(self.bbdown_path, "login")
+        self.web_login_thread.finished.connect(self.handle_web_login_finished)
+        self.web_login_thread.start()
+        
+        # 启动文件监控定时器
+        self.web_file_timer = QTimer()
+        self.web_file_timer.timeout.connect(self.check_web_login_file)
+        self.web_file_timer.start(2000)  # 每2秒检查一次
+    
+    def tv_login(self):
+        """App/TV接口登录"""
+        if not self.bbdown_path or not os.path.exists(self.bbdown_path):
+            reply = QMessageBox.question(
+                self, 
+                "BBDown未下载", 
+                "BBDown可执行文件不存在，需要先下载BBDown才能进行登录。\n\n是否现在下载BBDown？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes
+            )
+            
+            if reply == QMessageBox.Yes:
+                self.download_bbdown()
+            return
+        
+        # 显示登录提示
+        reply = QMessageBox.question(
+            self, 
+            "登录提示", 
+            "即将打开终端进行B站App/TV登录。\n\n请注意：\n• 登录过程中需要扫描二维码\n• 请将终端窗口最大化以便清楚看到二维码\n• 使用B站手机APP扫描二维码完成登录\n\n确认开始登录吗？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+        
+        # 禁用按钮防止重复点击
+        self.tv_login_btn.setEnabled(False)
+        self.tv_login_btn.setText("等待登录完成...")
+        
+        # 记录登录开始时间和数据文件路径
+        bbdown_dir = os.path.dirname(self.bbdown_path)
+        self.tv_data_file = os.path.join(bbdown_dir, "BBDownTV.data")
+        self.tv_login_start_time = time.time()
+        
+        # 创建登录线程
+        self.tv_login_thread = LoginThread(self.bbdown_path, "logintv")
+        self.tv_login_thread.finished.connect(self.handle_tv_login_finished)
+        self.tv_login_thread.start()
+        
+        # 启动文件监控定时器
+        self.tv_file_timer = QTimer()
+        self.tv_file_timer.timeout.connect(self.check_tv_login_file)
+        self.tv_file_timer.start(2000)  # 每2秒检查一次
+    
+    def handle_web_login_finished(self, success, message):
+        """处理Web登录完成"""
+        self.web_login_btn.setEnabled(True)
+        self.web_login_btn.setText("Web接口登录")
+        
+        if success:
+            # 读取BBDown.data文件
+            bbdown_dir = os.path.dirname(self.bbdown_path)
+            data_file = os.path.join(bbdown_dir, "BBDown.data")
+            
+            try:
+                if os.path.exists(data_file):
+                    with open(data_file, 'r', encoding='utf-8') as f:
+                        cookie_data = f.read().strip()
+                    
+                    # 更新显示区域
+                    self.cookie_display.setPlainText(cookie_data)
+                    
+                    # 自动填入添加任务选项卡的cookie输入框
+                    if hasattr(self, 'options_form') and hasattr(self.options_form, 'cookie'):
+                        self.options_form.cookie.setText(cookie_data)
+                    
+                    QMessageBox.information(self, "成功", "Web接口登录成功，Cookie已自动填入添加任务选项卡")
+                else:
+                    QMessageBox.warning(self, "警告", "登录可能成功，但未找到BBDown.data文件")
+            except Exception as e:
+                QMessageBox.warning(self, "错误", f"读取登录数据失败: {str(e)}")
+        else:
+            QMessageBox.warning(self, "错误", f"Web接口登录失败: {message}")
+    
+    def handle_tv_login_finished(self, success, message):
+        """处理TV登录完成"""
+        self.tv_login_btn.setEnabled(True)
+        self.tv_login_btn.setText("App/TV接口登录")
+        
+        if success:
+            # 读取BBDownTV.data文件
+            bbdown_dir = os.path.dirname(self.bbdown_path)
+            data_file = os.path.join(bbdown_dir, "BBDownTV.data")
+            
+            try:
+                if os.path.exists(data_file):
+                    with open(data_file, 'r', encoding='utf-8') as f:
+                        token_data = f.read().strip()
+                    
+                    # 更新显示区域
+                    self.token_display.setPlainText(token_data)
+                    
+                    # 自动填入添加任务选项卡的Access Token输入框
+                    if hasattr(self, 'options_form') and hasattr(self.options_form, 'access_token'):
+                        self.options_form.access_token.setText(token_data)
+                    
+                    QMessageBox.information(self, "成功", "App/TV接口登录成功，Access Token已自动填入添加任务选项卡")
+                else:
+                    QMessageBox.warning(self, "警告", "登录可能成功，但未找到BBDownTV.data文件")
+            except Exception as e:
+                QMessageBox.warning(self, "错误", f"读取登录数据失败: {str(e)}")
+        else:
+            QMessageBox.warning(self, "错误", f"App/TV接口登录失败: {message}")
+    
+    def check_web_login_file(self):
+        """检查Web登录数据文件是否更新"""
+        try:
+            if os.path.exists(self.web_data_file):
+                # 检查文件修改时间是否在登录开始之后
+                file_mtime = os.path.getmtime(self.web_data_file)
+                if file_mtime > self.web_login_start_time:
+                    # 停止定时器
+                    self.web_file_timer.stop()
+                    
+                    # 读取文件内容
+                    with open(self.web_data_file, 'r', encoding='utf-8') as f:
+                        cookie_data = f.read().strip()
+                    
+                    if cookie_data:
+                        # 更新显示区域
+                        self.cookie_display.setPlainText(cookie_data)
+                        
+                        # 自动填入添加任务选项卡的cookie输入框
+                        if hasattr(self, 'options_form') and hasattr(self.options_form, 'cookie'):
+                            self.options_form.cookie.setText(cookie_data)
+                        
+                        # 恢复按钮状态
+                        self.web_login_btn.setEnabled(True)
+                        self.web_login_btn.setText("Web接口登录")
+                        
+                        QMessageBox.information(self, "成功", "Web接口登录成功，Cookie已自动填入添加任务选项卡")
+                        return
+            
+            # 检查超时（5分钟）
+            if time.time() - self.web_login_start_time > 300:
+                self.web_file_timer.stop()
+                self.web_login_btn.setEnabled(True)
+                self.web_login_btn.setText("Web接口登录")
+                QMessageBox.warning(self, "超时", "等待登录超时，请重试")
+                
+        except Exception as e:
+            self.web_file_timer.stop()
+            self.web_login_btn.setEnabled(True)
+            self.web_login_btn.setText("Web接口登录")
+            QMessageBox.warning(self, "错误", f"检查登录文件失败: {str(e)}")
+    
+    def check_tv_login_file(self):
+        """检查TV登录数据文件是否更新"""
+        try:
+            if os.path.exists(self.tv_data_file):
+                # 检查文件修改时间是否在登录开始之后
+                file_mtime = os.path.getmtime(self.tv_data_file)
+                if file_mtime > self.tv_login_start_time:
+                    # 停止定时器
+                    self.tv_file_timer.stop()
+                    
+                    # 读取文件内容
+                    with open(self.tv_data_file, 'r', encoding='utf-8') as f:
+                        token_data = f.read().strip()
+                    
+                    if token_data:
+                        # 更新显示区域
+                        self.token_display.setPlainText(token_data)
+                        
+                        # 自动填入添加任务选项卡的Access Token输入框
+                        if hasattr(self, 'options_form') and hasattr(self.options_form, 'access_token'):
+                            self.options_form.access_token.setText(token_data)
+                        
+                        # 恢复按钮状态
+                        self.tv_login_btn.setEnabled(True)
+                        self.tv_login_btn.setText("App/TV接口登录")
+                        
+                        QMessageBox.information(self, "成功", "App/TV接口登录成功，Access Token已自动填入添加任务选项卡")
+                        return
+            
+            # 检查超时（5分钟）
+            if time.time() - self.tv_login_start_time > 300:
+                self.tv_file_timer.stop()
+                self.tv_login_btn.setEnabled(True)
+                self.tv_login_btn.setText("App/TV接口登录")
+                QMessageBox.warning(self, "超时", "等待登录超时，请重试")
+                
+        except Exception as e:
+            self.tv_file_timer.stop()
+            self.tv_login_btn.setEnabled(True)
+            self.tv_login_btn.setText("App/TV接口登录")
+            QMessageBox.warning(self, "错误", f"检查登录文件失败: {str(e)}")
+    
+    def load_existing_auth_data(self):
+        """启动时自动读取已有的认证数据文件"""
+        print("[DEBUG] 开始加载认证数据")
+        if not self.bbdown_path or not os.path.exists(self.bbdown_path):
+            print(f"[DEBUG] BBDown路径不存在或未设置: {self.bbdown_path}")
+            return
+        
+        bbdown_dir = os.path.dirname(self.bbdown_path)
+        print(f"[DEBUG] BBDown目录: {bbdown_dir}")
+        
+        # 读取Web接口认证数据
+        web_data_file = os.path.join(bbdown_dir, "BBDown.data")
+        print(f"[DEBUG] 检查Web认证数据文件: {web_data_file}")
+        if os.path.exists(web_data_file):
+            print("[DEBUG] Web认证数据文件存在，开始读取")
+            try:
+                with open(web_data_file, 'r', encoding='utf-8') as f:
+                    web_data = f.read().strip()
+                print(f"[DEBUG] 读取到Web认证数据长度: {len(web_data)}")
+                if web_data:
+                    # 更新Cookie显示区域
+                    if hasattr(self, 'cookie_display'):
+                        self.cookie_display.setPlainText(web_data)
+                        print("[DEBUG] 已更新Cookie显示区域")
+                    # 自动填充到添加任务选项卡
+                    if hasattr(self, 'options_form') and hasattr(self.options_form, 'cookie'):
+                        self.options_form.cookie.setText(web_data)
+                        print("[DEBUG] 已填充Cookie到添加任务选项卡")
+                        # 自动勾选网络设置组
+                        self.auto_check_network_group()
+                    print("已自动加载Web接口认证数据")
+                else:
+                    print("[DEBUG] Web认证数据文件为空")
+            except Exception as e:
+                print(f"读取Web接口认证数据失败: {str(e)}")
+        else:
+            print("[DEBUG] Web认证数据文件不存在")
+        
+        # 读取TV接口认证数据
+        tv_data_file = os.path.join(bbdown_dir, "BBDownTV.data")
+        print(f"[DEBUG] 检查TV认证数据文件: {tv_data_file}")
+        if os.path.exists(tv_data_file):
+            print("[DEBUG] TV认证数据文件存在，开始读取")
+            try:
+                with open(tv_data_file, 'r', encoding='utf-8') as f:
+                    tv_data = f.read().strip()
+                print(f"[DEBUG] 读取到TV认证数据长度: {len(tv_data)}")
+                if tv_data:
+                    # 更新Access Token显示区域
+                    if hasattr(self, 'token_display'):
+                        self.token_display.setPlainText(tv_data)
+                        print("[DEBUG] 已更新Access Token显示区域")
+                    # 自动填充到添加任务选项卡
+                    if hasattr(self, 'options_form') and hasattr(self.options_form, 'access_token'):
+                        self.options_form.access_token.setText(tv_data)
+                        print("[DEBUG] 已填充Access Token到添加任务选项卡")
+                        # 自动勾选网络设置组
+                        self.auto_check_network_group()
+                    print("已自动加载App/TV接口认证数据")
+                else:
+                    print("[DEBUG] TV认证数据文件为空")
+            except Exception as e:
+                print(f"读取App/TV接口认证数据失败: {str(e)}")
+        else:
+            print("[DEBUG] TV认证数据文件不存在")
+    
+    def auto_check_network_group(self):
+        """自动勾选网络设置组"""
+        if hasattr(self, 'options_form'):
+            # 查找网络设置组
+            for child in self.options_form.findChildren(QGroupBox):
+                if child.title() == "网络设置":
+                    if not child.isChecked():
+                        child.setChecked(True)
+                        print("[DEBUG] 已自动勾选网络设置组")
+                    break
+
+
+class LoginThread(QThread):
+    """登录线程类"""
+    finished = pyqtSignal(bool, str)  # success, message
+    
+    def __init__(self, bbdown_path, command):
+        super().__init__()
+        self.bbdown_path = bbdown_path
+        self.command = command
+    
+    def run(self):
+        try:
+            # 构建命令
+            cmd = [self.bbdown_path, self.command]
+            
+            # 在macOS上使用终端执行命令，但不强制关闭窗口
+            if platform.system() == "Darwin":
+                # 创建AppleScript来打开终端并执行命令，让用户手动关闭
+                script = f'''
+                tell application "Terminal"
+                    activate
+                    set newTab to do script "{' '.join(cmd)}"
+                    repeat
+                        delay 1
+                        if not busy of newTab then exit repeat
+                    end repeat
+                end tell
+                '''
+                
+                result = subprocess.run(
+                    ['osascript', '-e', script],
+                    capture_output=True,
+                    text=True,
+                    timeout=300  # 5分钟超时
+                )
+                
+                if result.returncode == 0:
+                    self.finished.emit(True, "登录完成")
+                else:
+                    self.finished.emit(False, f"终端执行失败: {result.stderr}")
+            else:
+                # 其他平台直接执行命令
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=300
+                )
+                
+                if result.returncode == 0:
+                    self.finished.emit(True, "登录完成")
+                else:
+                    self.finished.emit(False, f"登录失败: {result.stderr}")
+                    
+        except subprocess.TimeoutExpired:
+            self.finished.emit(False, "登录超时")
+        except Exception as e:
+            self.finished.emit(False, f"登录过程出错: {str(e)}")
+
 
 # 应用启动优化
 if __name__ == "__main__":
