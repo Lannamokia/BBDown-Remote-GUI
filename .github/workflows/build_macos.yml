@@ -71,11 +71,11 @@ jobs:
         echo "🔧 自定义应用程序包..."
         
         # 更新 Info.plist 添加更多元数据
-        /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(date +%Y%m%d%H%M)" "$DIST_APP/Contents/Info.plist"
-        /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0" "$DIST_APP/Contents/Info.plist"
-        /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion 10.15" "$DIST_APP/Contents/Info.plist"
-        /usr/libexec/PlistBuddy -c "Set :NSHighResolutionCapable true" "$DIST_APP/Contents/Info.plist"
-        /usr/libexec/PlistBuddy -c "Set :NSSupportsAutomaticGraphicsSwitching true" "$DIST_APP/Contents/Info.plist"
+         /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $(date +%Y%m%d%H%M)" "$DIST_APP/Contents/Info.plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(date +%Y%m%d%H%M)" "$DIST_APP/Contents/Info.plist"
+         /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 1.0" "$DIST_APP/Contents/Info.plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0" "$DIST_APP/Contents/Info.plist"
+         /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 10.15" "$DIST_APP/Contents/Info.plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion 10.15" "$DIST_APP/Contents/Info.plist"
+         /usr/libexec/PlistBuddy -c "Add :NSHighResolutionCapable bool true" "$DIST_APP/Contents/Info.plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :NSHighResolutionCapable true" "$DIST_APP/Contents/Info.plist"
+         /usr/libexec/PlistBuddy -c "Add :NSSupportsAutomaticGraphicsSwitching bool true" "$DIST_APP/Contents/Info.plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :NSSupportsAutomaticGraphicsSwitching true" "$DIST_APP/Contents/Info.plist"
         
         # 确保图标文件在正确位置
         cp bbdown_icon.icns "$DIST_APP/Contents/Resources/"
