@@ -2,12 +2,12 @@
 
 
 a = Analysis(
-    ['bbdown_gui.py'],
+    ['/Users/ningxi/Desktop/bbd/BBDown-Remote-GUI/bbdown_gui.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('bbdown_icon.ico', '.')],
     hiddenimports=[],
-    hookspath=[],
+    hookspath=['hooks'],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[],
@@ -32,14 +32,14 @@ exe = EXE(
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
-    target_arch=None,
+    target_arch='x86_64',
     codesign_identity=None,
     entitlements_file=None,
-    icon=['bbdown_icon.icns'],
+    icon=['bbdown_icon.ico'],
 )
 app = BUNDLE(
     exe,
     name='BBDown-GUI.app',
-    icon='bbdown_icon.icns',
+    icon='bbdown_icon.ico',
     bundle_identifier=None,
 )

@@ -19,4 +19,4 @@ excludedimports = [
 ]
 
 # 过滤掉不必要的模块
-hiddenimports = [m for m in hiddenimports if not any(m.startswith(ex) for ex in excludedimports]
+hiddenimports = [m for m in hiddenimports if not any(m.startswith(ex) for ex in excludedimports)]

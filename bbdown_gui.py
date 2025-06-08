@@ -3,7 +3,12 @@ import os
 import json
 import requests
 import ctypes
+import subprocess
+import platform
+import zipfile
+import tarfile
 from datetime import datetime
+from urllib.parse import urlparse
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem,
@@ -133,6 +138,184 @@ class APITaskThread(QThread):
         except Exception as e:
             print(f"API线程错误: {str(e)}")
             self.finished.emit(None)
+
+# BBDown下载和管理线程
+class BBDownManagerThread(QThread):
+    progress = pyqtSignal(str)  # 进度信息
+    finished = pyqtSignal(bool, str)  # 完成状态和消息
+    
+    def __init__(self, action="download", bbdown_path=None):
+        super().__init__()
+        self.action = action
+        self.bbdown_path = bbdown_path
+        
+    def run(self):
+        try:
+            if self.action == "download":
+                self.download_bbdown()
+            elif self.action == "start":
+                self.start_bbdown_server()
+        except Exception as e:
+            self.finished.emit(False, f"操作失败: {str(e)}")
+    
+    def download_bbdown(self):
+        """下载最新版本的BBDown"""
+        try:
+            self.progress.emit("正在获取最新版本信息...")
+            
+            # 获取最新版本信息
+            releases_url = "https://api.github.com/repos/nilaoda/BBDown/releases/latest"
+            response = requests.get(releases_url, timeout=30)
+            if response.status_code != 200:
+                raise Exception("无法获取版本信息")
+            
+            release_data = response.json()
+            tag_name = release_data["tag_name"]
+            assets = release_data["assets"]
+            
+            # 确定当前系统和架构
+            system = platform.system().lower()
+            machine = platform.machine().lower()
+            
+            # 映射系统和架构名称
+            if system == "darwin":
+                if machine in ["arm64", "aarch64"]:
+                    target_name = "osx-arm64"
+                else:
+                    target_name = "osx-x64"
+            elif system == "windows":
+                if machine in ["amd64", "x86_64"]:
+                    target_name = "win-x64"
+                else:
+                    target_name = "win-x86"
+            elif system == "linux":
+                if machine in ["aarch64", "arm64"]:
+                    target_name = "linux-arm64"
+                elif machine in ["amd64", "x86_64"]:
+                    target_name = "linux-x64"
+                else:
+                    target_name = "linux-x86"
+            else:
+                raise Exception(f"不支持的系统: {system}")
+            
+            # 查找匹配的资源
+            download_url = None
+            for asset in assets:
+                if target_name in asset["name"]:
+                    download_url = asset["browser_download_url"]
+                    break
+            
+            if not download_url:
+                raise Exception(f"未找到适合 {system}-{machine} 的版本")
+            
+            self.progress.emit(f"正在下载 {tag_name} 版本...")
+            
+            # 创建BBDown目录
+            bbdown_dir = os.path.join(os.path.expanduser("~"), ".bbdown")
+            os.makedirs(bbdown_dir, exist_ok=True)
+            
+            # 下载文件
+            filename = os.path.basename(urlparse(download_url).path)
+            download_path = os.path.join(bbdown_dir, filename)
+            
+            response = requests.get(download_url, stream=True, timeout=60)
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded = 0
+            
+            with open(download_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total_size > 0:
+                            progress = (downloaded / total_size) * 100
+                            self.progress.emit(f"下载进度: {progress:.1f}%")
+            
+            self.progress.emit("正在解压文件...")
+            
+            # 解压文件
+            extract_dir = os.path.join(bbdown_dir, "current")
+            if os.path.exists(extract_dir):
+                import shutil
+                shutil.rmtree(extract_dir)
+            os.makedirs(extract_dir)
+            
+            if filename.endswith('.zip'):
+                with zipfile.ZipFile(download_path, 'r') as zip_ref:
+                    zip_ref.extractall(extract_dir)
+            elif filename.endswith(('.tar.gz', '.tgz')):
+                with tarfile.open(download_path, 'r:gz') as tar_ref:
+                    tar_ref.extractall(extract_dir)
+            
+            # 查找BBDown可执行文件
+            bbdown_exe = None
+            for root, dirs, files in os.walk(extract_dir):
+                for file in files:
+                    if file.lower().startswith('bbdown') and (file.endswith('.exe') or '.' not in file):
+                        bbdown_exe = os.path.join(root, file)
+                        break
+                if bbdown_exe:
+                    break
+            
+            if not bbdown_exe:
+                raise Exception("未找到BBDown可执行文件")
+            
+            # 在macOS上设置可执行权限
+            if system == "darwin":
+                self.progress.emit("正在设置可执行权限...")
+                try:
+                    # 尝试直接设置权限
+                    os.chmod(bbdown_exe, 0o755)
+                except PermissionError:
+                    # 如果权限不足，使用sudo
+                    try:
+                        subprocess.run(['sudo', 'chmod', '+x', bbdown_exe], check=True)
+                    except subprocess.CalledProcessError:
+                        # 如果sudo失败，尝试使用osascript请求管理员权限
+                        script = f'do shell script "chmod +x {bbdown_exe}" with administrator privileges'
+                        subprocess.run(['osascript', '-e', script], check=True)
+            
+            # 清理下载的压缩包
+            os.remove(download_path)
+            
+            self.finished.emit(True, f"BBDown {tag_name} 下载完成: {bbdown_exe}")
+            
+        except Exception as e:
+            self.finished.emit(False, f"下载失败: {str(e)}")
+    
+    def start_bbdown_server(self):
+        """启动BBDown服务器"""
+        try:
+            if not self.bbdown_path or not os.path.exists(self.bbdown_path):
+                raise Exception("BBDown可执行文件不存在")
+            
+            self.progress.emit("正在启动BBDown服务器...")
+            
+            # 启动BBDown服务器
+            cmd = [self.bbdown_path, "serve", "-l", "http://0.0.0.0:58682"]
+            
+            # 在后台启动进程
+            if platform.system() == "Windows":
+                subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            else:
+                subprocess.Popen(cmd)
+            
+            # 等待一下让服务器启动
+            import time
+            time.sleep(2)
+            
+            # 检查服务器是否启动成功
+            try:
+                response = requests.get("http://localhost:58682/get-tasks/", timeout=5)
+                if response.status_code == 200:
+                    self.finished.emit(True, "BBDown服务器启动成功")
+                else:
+                    self.finished.emit(False, "服务器启动失败")
+            except:
+                self.finished.emit(False, "无法连接到BBDown服务器")
+                
+        except Exception as e:
+            self.finished.emit(False, f"启动失败: {str(e)}")
 
 class OptionsForm(QWidget):
     def __init__(self, parent=None):
@@ -756,9 +939,31 @@ class BBDownGUI(QMainWindow):
         layout.addWidget(QLabel("端口:"))
         layout.addWidget(self.port_input)
         layout.addWidget(self.connect_btn)
+        
+        # 添加分隔线
+        separator = QFrame()
+        separator.setFrameShape(QFrame.VLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(separator)
+        
+        # BBDown管理按钮
+        self.download_bbdown_btn = QPushButton("下载BBDown")
+        self.download_bbdown_btn.setIcon(QIcon.fromTheme("document-save"))
+        self.download_bbdown_btn.clicked.connect(self.download_bbdown)
+        
+        self.start_bbdown_btn = QPushButton("启动BBDown服务")
+        self.start_bbdown_btn.setIcon(QIcon.fromTheme("media-playback-start"))
+        self.start_bbdown_btn.clicked.connect(self.start_bbdown_server)
+        self.start_bbdown_btn.setEnabled(False)  # 初始禁用
+        
+        layout.addWidget(self.download_bbdown_btn)
+        layout.addWidget(self.start_bbdown_btn)
         layout.addStretch()
         
         self.main_layout.addWidget(connection_group)
+        
+        # 检查是否已有BBDown
+        self.check_existing_bbdown()
     
     def update_connection(self):
         host = self.host_input.text().strip()
@@ -1112,6 +1317,117 @@ class BBDownGUI(QMainWindow):
         detail_dialog.setText("\n".join(details))
         detail_dialog.setStandardButtons(QMessageBox.Ok)
         detail_dialog.exec_()
+    
+    def check_existing_bbdown(self):
+        """检查是否已存在BBDown可执行文件"""
+        bbdown_dir = os.path.join(os.path.expanduser("~"), ".bbdown", "current")
+        if os.path.exists(bbdown_dir):
+            for root, dirs, files in os.walk(bbdown_dir):
+                for file in files:
+                    if file.lower().startswith('bbdown') and (file.endswith('.exe') or '.' not in file):
+                        self.bbdown_path = os.path.join(root, file)
+                        self.start_bbdown_btn.setEnabled(True)
+                        self.download_bbdown_btn.setText("重新下载BBDown")
+                        return
+        
+        self.bbdown_path = None
+        self.start_bbdown_btn.setEnabled(False)
+        self.download_bbdown_btn.setText("下载BBDown")
+    
+    def download_bbdown(self):
+        """下载BBDown"""
+        # 禁用按钮防止重复点击
+        self.download_bbdown_btn.setEnabled(False)
+        
+        # 创建进度对话框
+        from PyQt5.QtWidgets import QProgressDialog
+        self.progress_dialog = QProgressDialog("正在下载BBDown...", "取消", 0, 0, self)
+        self.progress_dialog.setWindowTitle("下载BBDown")
+        self.progress_dialog.setModal(True)
+        self.progress_dialog.show()
+        
+        # 启动下载线程
+        self.bbdown_manager_thread = BBDownManagerThread("download")
+        self.bbdown_manager_thread.progress.connect(self.update_download_progress)
+        self.bbdown_manager_thread.finished.connect(self.handle_download_finished)
+        self.bbdown_manager_thread.start()
+        
+        # 连接取消按钮
+        self.progress_dialog.canceled.connect(self.cancel_download)
+    
+    def update_download_progress(self, message):
+        """更新下载进度"""
+        if hasattr(self, 'progress_dialog'):
+            self.progress_dialog.setLabelText(message)
+    
+    def handle_download_finished(self, success, message):
+        """处理下载完成"""
+        # 关闭进度对话框
+        if hasattr(self, 'progress_dialog'):
+            self.progress_dialog.close()
+            delattr(self, 'progress_dialog')
+        
+        # 重新启用按钮
+        self.download_bbdown_btn.setEnabled(True)
+        
+        if success:
+            QMessageBox.information(self, "成功", message)
+            # 重新检查BBDown状态
+            self.check_existing_bbdown()
+        else:
+            QMessageBox.critical(self, "错误", message)
+    
+    def cancel_download(self):
+        """取消下载"""
+        if hasattr(self, 'bbdown_manager_thread') and self.bbdown_manager_thread.isRunning():
+            self.bbdown_manager_thread.terminate()
+            self.bbdown_manager_thread.wait()
+        
+        self.download_bbdown_btn.setEnabled(True)
+    
+    def start_bbdown_server(self):
+        """启动BBDown服务器"""
+        if not hasattr(self, 'bbdown_path') or not self.bbdown_path:
+            QMessageBox.warning(self, "错误", "请先下载BBDown")
+            return
+        
+        # 禁用按钮防止重复点击
+        self.start_bbdown_btn.setEnabled(False)
+        
+        # 创建进度对话框
+        from PyQt5.QtWidgets import QProgressDialog
+        self.start_progress_dialog = QProgressDialog("正在启动BBDown服务器...", None, 0, 0, self)
+        self.start_progress_dialog.setWindowTitle("启动服务器")
+        self.start_progress_dialog.setModal(True)
+        self.start_progress_dialog.show()
+        
+        # 启动服务器线程
+        self.bbdown_start_thread = BBDownManagerThread("start", self.bbdown_path)
+        self.bbdown_start_thread.progress.connect(self.update_start_progress)
+        self.bbdown_start_thread.finished.connect(self.handle_start_finished)
+        self.bbdown_start_thread.start()
+    
+    def update_start_progress(self, message):
+        """更新启动进度"""
+        if hasattr(self, 'start_progress_dialog'):
+            self.start_progress_dialog.setLabelText(message)
+    
+    def handle_start_finished(self, success, message):
+        """处理启动完成"""
+        # 关闭进度对话框
+        if hasattr(self, 'start_progress_dialog'):
+            self.start_progress_dialog.close()
+            delattr(self, 'start_progress_dialog')
+        
+        # 重新启用按钮
+        self.start_bbdown_btn.setEnabled(True)
+        
+        if success:
+            QMessageBox.information(self, "成功", message)
+            # 自动刷新任务列表
+            self.start_refresh_tasks()
+        else:
+            QMessageBox.critical(self, "错误", message)
 
 # 应用启动优化
 if __name__ == "__main__":
