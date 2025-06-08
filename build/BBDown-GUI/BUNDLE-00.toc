@@ -1,3 +1,0 @@
-([('BBDown-GUI',
-   '/Users/ningxi/Desktop/bbd/BBDown-Remote-GUI/dist/BBDown-GUI',
-   'EXECUTABLE')],)
