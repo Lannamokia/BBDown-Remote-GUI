@@ -48,14 +48,13 @@ jobs:
         echo "🔨 开始构建 macOS 应用程序..."
         
         # 使用 PyInstaller 直接构建 .app 包
-        pyinstaller --clean --noconfirm \
-          --windowed \
-          --name "BBDown GUI" \
-          --icon bbdown_icon.icns \
-          --osx-bundle-identifier com.bbdown.gui \
-          --add-data "bbdown_icon.icns:." \
-          --target-architecture universal2 \
-          bbdown_gui.py
+         pyinstaller --clean --noconfirm \
+           --windowed \
+           --name "BBDown GUI" \
+           --icon bbdown_icon.icns \
+           --osx-bundle-identifier com.bbdown.gui \
+           --add-data "bbdown_icon.icns:." \
+           bbdown_gui.py
         
         echo "✅ PyInstaller 构建完成"
         
